@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
@@ -43,7 +44,9 @@ namespace FlixPiP
 
         private IntPtr _windowHandle;
         private int _initialStyle;
-        private bool _isMoveEnabled = true; // 現在移動キーを受け付けるか（操作モード時のみTrue）
+        // private bool _isMoveEnabled = true; // 現在移動キーを受け付けるか（操作モード時のみTrue）現状常時移動状態として設定したためコメントアウト
+
+        private byte _currentOpacity = 127; // 透明度の設定 （初期値50%）
 
         public MainWindow()
         {
@@ -52,8 +55,8 @@ namespace FlixPiP
             webView.EnsureCoreWebView2Async();
             webView.Source = new Uri("https://google.com");
 
-            webView.NavigationCompleted += WebView_NavigationCompleted;
             this.PreviewKeyDown += MainWindow_PreviewKeyDown;
+            webView.NavigationCompleted += WebView_NavigationCompleted;
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -72,6 +75,10 @@ namespace FlixPiP
             RegisterHotKey(_windowHandle, HK_CLOSE, MOD_CONTROL, 0x27); // 0x27 = 矢印右 (Ctrl + →)
             RegisterHotKey(_windowHandle, HK_NAV_GOOGLE, MOD_CONTROL, 0x25); // 0x25 = 矢印左 (Ctrl + ←)
 
+            // Alt + 矢印のホットキー登録（透明度変更用）
+            RegisterHotKey(_windowHandle, 9005, MOD_SHIFT, VK_UP);    // Shift + ↑ (透明度UP)
+            RegisterHotKey(_windowHandle, 9006, MOD_SHIFT, VK_DOWN);  // Shift + ↓ (透明度DOWN)
+
             ComponentDispatcher.ThreadFilterMessage += ComponentDispatcher_ThreadFilterMessage;
         }
 
@@ -87,7 +94,7 @@ namespace FlixPiP
                     // 操作モード
                     SetWindowLong(_windowHandle, GWL_EXSTYLE, _initialStyle | WS_EX_LAYERED);
                     SetLayeredWindowAttributes(_windowHandle, 0, 255, LWA_ALPHA);
-                    _isMoveEnabled = true;
+                    // _isMoveEnabled = true;
                     this.Focus(); // キー移動を受け付けるためにフォーカスを当てる
                     handled = true;
                 }
@@ -95,20 +102,40 @@ namespace FlixPiP
                 {
                     // すり抜けモード(45%)
                     SetWindowLong(_windowHandle, GWL_EXSTYLE, _initialStyle | WS_EX_LAYERED | WS_EX_TRANSPARENT);
-                    SetLayeredWindowAttributes(_windowHandle, 0, 115, LWA_ALPHA);
-                    _isMoveEnabled = false;
+                    SetLayeredWindowAttributes(_windowHandle, 0, _currentOpacity, LWA_ALPHA);
+                    // _isMoveEnabled = false;
                     handled = true;
                 }
                 else if (id == HK_CLOSE)
                 {
-                    // Ctrl + → でアプリ終了
-                    this.Close();
-                    handled = true;
+                    if (MessageBox.Show("FlixPiPを終了しますか？",
+                                        "確認画面",
+                                        MessageBoxButton.YesNo,
+                                        MessageBoxImage.Question) == MessageBoxResult.Yes)
+                    {
+                        this.Close();
+                    }
                 }
                 else if (id == HK_NAV_GOOGLE)
                 {
                     // WebView2のページをGoogleに切り替える
                     webView.CoreWebView2.Navigate("https://www.google.com");
+                    handled = true;
+                }
+                else if (id == 9005)
+                {
+                    // Shift + ↑ で透明度UP
+                    _currentOpacity = (byte)Math.Min(255, _currentOpacity + 15);
+                    SetLayeredWindowAttributes(_windowHandle, 0, _currentOpacity, LWA_ALPHA);
+                    Console.WriteLine($"[HOTKEY] Opacity UP: {_currentOpacity}");
+                    handled = true;
+                }
+                else if (id == 9006)
+                {
+                    // Shift + ↓ で透明度DOWN
+                    _currentOpacity = (byte)Math.Max(0, _currentOpacity - 15);
+                    SetLayeredWindowAttributes(_windowHandle, 0, _currentOpacity, LWA_ALPHA);
+                    Console.WriteLine($"[HOTKEY] Opacity DOWN: {_currentOpacity}");
                     handled = true;
                 }
             }
@@ -117,17 +144,16 @@ namespace FlixPiP
         // 矢印キーによる移動とサイズ変更の処理
         private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
         {
-            if (!_isMoveEnabled) return; // すり抜けモード中は動かさない
 
             double moveStep = 15; // 1回に動くピクセル数
             double resizeStep = 20;
 
-            // Shiftキーが押されているかどうか
-            bool isShiftPressed = Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift);
+            // Altキーが押されているかどうか
+            bool isAlttPressed = Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift);
 
-            if (isShiftPressed)
+            if (isAlttPressed)
             {
-                // サイズ変更モード：Shift + 矢印
+                // サイズ変更モード：Alt + 矢印
                 if (e.Key == Key.Left) this.Width = Math.Max(200, this.Width - resizeStep);
                 if (e.Key == Key.Right) this.Width = Math.Min(1920, this.Width + resizeStep);
                 if (e.Key == Key.Up) this.Height = Math.Max(150, this.Height - resizeStep);
@@ -162,6 +188,9 @@ namespace FlixPiP
             UnregisterHotKey(_windowHandle, HK_MODE_OP);
             UnregisterHotKey(_windowHandle, HK_MODE_GAME);
             UnregisterHotKey(_windowHandle, HK_CLOSE);
+            UnregisterHotKey(_windowHandle, HK_NAV_GOOGLE);
+            UnregisterHotKey(_windowHandle, 9005); // Shift + ↑
+            UnregisterHotKey(_windowHandle, 9006); // Shift + ↓
             base.OnClosed(e);
         }
     }
