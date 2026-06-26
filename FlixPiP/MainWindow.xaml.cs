@@ -44,7 +44,6 @@ namespace FlixPiP
 
         private IntPtr _windowHandle;
         private int _initialStyle;
-        // private bool _isMoveEnabled = true; // 現在移動キーを受け付けるか（操作モード時のみTrue）現状常時移動状態として設定したためコメントアウト
 
         private byte _currentOpacity = 127; // 透明度の設定 （初期値50%）
 
@@ -94,16 +93,14 @@ namespace FlixPiP
                     // 操作モード
                     SetWindowLong(_windowHandle, GWL_EXSTYLE, _initialStyle | WS_EX_LAYERED);
                     SetLayeredWindowAttributes(_windowHandle, 0, 255, LWA_ALPHA);
-                    // _isMoveEnabled = true;
                     this.Focus(); // キー移動を受け付けるためにフォーカスを当てる
                     handled = true;
                 }
                 else if (id == HK_MODE_GAME)
                 {
-                    // すり抜けモード(45%)
+                    // すり抜けモード
                     SetWindowLong(_windowHandle, GWL_EXSTYLE, _initialStyle | WS_EX_LAYERED | WS_EX_TRANSPARENT);
                     SetLayeredWindowAttributes(_windowHandle, 0, _currentOpacity, LWA_ALPHA);
-                    // _isMoveEnabled = false;
                     handled = true;
                 }
                 else if (id == HK_CLOSE)
@@ -180,18 +177,6 @@ namespace FlixPiP
         private async void WebView_NavigationCompleted(object sender, Microsoft.Web.WebView2.Core.CoreWebView2NavigationCompletedEventArgs e)
         {
             await webView.EnsureCoreWebView2Async();
-        }
-
-        protected override void OnClosed(EventArgs e)
-        {
-            ComponentDispatcher.ThreadFilterMessage -= ComponentDispatcher_ThreadFilterMessage;
-            UnregisterHotKey(_windowHandle, HK_MODE_OP);
-            UnregisterHotKey(_windowHandle, HK_MODE_GAME);
-            UnregisterHotKey(_windowHandle, HK_CLOSE);
-            UnregisterHotKey(_windowHandle, HK_NAV_GOOGLE);
-            UnregisterHotKey(_windowHandle, 9005); // Shift + ↑
-            UnregisterHotKey(_windowHandle, 9006); // Shift + ↓
-            base.OnClosed(e);
         }
     }
 }
