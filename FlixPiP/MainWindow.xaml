@@ -9,5 +9,5 @@
         Topmost="True"
         WindowStartupLocation="CenterScreen">
 
-    <wv2:WebView2 x:Name="webView" Source="https://google.com"/>
+        <wv2:WebView2 x:Name="webView" Source="https://google.com"/>
 </Window>

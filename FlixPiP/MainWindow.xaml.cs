@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 
@@ -45,6 +46,8 @@ namespace FlixPiP
         private IntPtr _windowHandle;
         private int _initialStyle;
 
+        private Window _currentOpacityWindow;
+        private System.Windows.Threading.DispatcherTimer _opacityTimer;
         private byte _currentOpacity = 127; // 透明度の設定 （初期値50%）
 
         public MainWindow()
@@ -124,7 +127,8 @@ namespace FlixPiP
                     // Shift + ↑ で透明度UP
                     _currentOpacity = (byte)Math.Min(255, _currentOpacity + 15);
                     SetLayeredWindowAttributes(_windowHandle, 0, _currentOpacity, LWA_ALPHA);
-                    Console.WriteLine($"[HOTKEY] Opacity UP: {_currentOpacity}");
+                    SetWindowLong(_windowHandle, GWL_EXSTYLE, _initialStyle | WS_EX_LAYERED | WS_EX_TRANSPARENT);
+                    ShowTemporaryOpacityDisplay();
                     handled = true;
                 }
                 else if (id == 9006)
@@ -132,7 +136,8 @@ namespace FlixPiP
                     // Shift + ↓ で透明度DOWN
                     _currentOpacity = (byte)Math.Max(0, _currentOpacity - 15);
                     SetLayeredWindowAttributes(_windowHandle, 0, _currentOpacity, LWA_ALPHA);
-                    Console.WriteLine($"[HOTKEY] Opacity DOWN: {_currentOpacity}");
+                    SetWindowLong(_windowHandle, GWL_EXSTYLE, _initialStyle | WS_EX_LAYERED | WS_EX_TRANSPARENT);
+                    ShowTemporaryOpacityDisplay();
                     handled = true;
                 }
             }
@@ -177,6 +182,58 @@ namespace FlixPiP
         private async void WebView_NavigationCompleted(object sender, Microsoft.Web.WebView2.Core.CoreWebView2NavigationCompletedEventArgs e)
         {
             await webView.EnsureCoreWebView2Async();
+        }
+
+        private void ShowTemporaryOpacityDisplay()
+        {
+            // 既存のタイマーがあれば停止
+            if (_opacityTimer != null)
+            {
+                _opacityTimer.Stop();
+            }
+
+            // 既存のウィンドウがあれば閉じる
+            if (_currentOpacityWindow != null)
+            {
+                _currentOpacityWindow.Close();
+            }
+
+            double percentageOpacity = Math.Round((_currentOpacity / 255.0) * 100);
+            _currentOpacityWindow = new Window
+            {
+                Title = "透明度",
+                Content = new TextBlock
+                {
+                    Text = $"透明度: {percentageOpacity}%",
+                    Foreground = System.Windows.Media.Brushes.White,
+                    FontSize = 16,
+                    FontWeight = FontWeights.Bold,
+                    TextAlignment = System.Windows.TextAlignment.Center,
+                    Padding = new Thickness(30)
+                },
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(50, 0, 0, 0)),
+                WindowStyle = WindowStyle.None,
+                AllowsTransparency = true,
+                SizeToContent = SizeToContent.WidthAndHeight,
+                Topmost = true,
+                WindowStartupLocation = WindowStartupLocation.CenterScreen
+            };
+
+            _currentOpacityWindow.Show();
+
+            // 2秒後に自動で閉じる
+            _opacityTimer = new System.Windows.Threading.DispatcherTimer();
+            _opacityTimer.Interval = TimeSpan.FromSeconds(2);
+            _opacityTimer.Tick += (s, e) =>
+            {
+                _opacityTimer.Stop();
+                if (_currentOpacityWindow != null)
+                {
+                    _currentOpacityWindow.Close();
+                    _currentOpacityWindow = null;
+                }
+            };
+            _opacityTimer.Start();
         }
     }
 }
