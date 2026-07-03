@@ -35,7 +35,7 @@ namespace FlixPiP
         private const uint VK_UP = 0x26;
         private const uint VK_DOWN = 0x28;
         private const uint VK_LEFT = 0x25;
-        private const uint VK_RIGHT = 0x26;
+        private const uint VK_RIGHT = 0x27;
 
         // ホットキーID定義
         private const int HK_MODE_OP = 9001;   // Ctrl + ↑ (操作モード)
@@ -49,6 +49,11 @@ namespace FlixPiP
         private Window _currentOpacityWindow;
         private System.Windows.Threading.DispatcherTimer _opacityTimer;
         private byte _currentOpacity = 127; // 透明度の設定 （初期値50%）
+
+        public int Bookmarknumber = 0; // 現在のブックマーク番号
+
+        private Window _ShowURLWindow;
+        private System.Windows.Threading.DispatcherTimer _ShowURLTimer;
 
         public MainWindow()
         {
@@ -72,14 +77,16 @@ namespace FlixPiP
             SetLayeredWindowAttributes(_windowHandle, 0, 255, LWA_ALPHA);
 
             // グローバルホットキー登録
-            RegisterHotKey(_windowHandle, HK_MODE_OP, MOD_CONTROL, VK_UP);
-            RegisterHotKey(_windowHandle, HK_MODE_GAME, MOD_CONTROL, VK_DOWN);
-            RegisterHotKey(_windowHandle, HK_CLOSE, MOD_CONTROL, 0x27); // 0x27 = 矢印右 (Ctrl + →)
-            RegisterHotKey(_windowHandle, HK_NAV_GOOGLE, MOD_CONTROL, 0x25); // 0x25 = 矢印左 (Ctrl + ←)
+            RegisterHotKey(_windowHandle, 9001, MOD_CONTROL, VK_UP);
+            RegisterHotKey(_windowHandle, 9002, MOD_CONTROL, VK_DOWN);
+            RegisterHotKey(_windowHandle, 9003, MOD_CONTROL, 0x27); // 0x27 = 矢印右 (Ctrl + →)
+            RegisterHotKey(_windowHandle, 9004, MOD_CONTROL, 0x25); // 0x25 = 矢印左 (Ctrl + ←)
 
             // Alt + 矢印のホットキー登録（透明度変更用）
             RegisterHotKey(_windowHandle, 9005, MOD_SHIFT, VK_UP);    // Shift + ↑ (透明度UP)
             RegisterHotKey(_windowHandle, 9006, MOD_SHIFT, VK_DOWN);  // Shift + ↓ (透明度DOWN)
+            RegisterHotKey(_windowHandle, 9007, MOD_SHIFT, VK_LEFT);  // Shift + ↓ (透明度DOWN)
+            RegisterHotKey(_windowHandle, 9008, MOD_SHIFT, VK_RIGHT);  // Shift + ↓ (透明度DOWN)
 
             ComponentDispatcher.ThreadFilterMessage += ComponentDispatcher_ThreadFilterMessage;
         }
@@ -140,6 +147,10 @@ namespace FlixPiP
                     ShowTemporaryOpacityDisplay();
                     handled = true;
                 }
+                else if (id == 9007)
+                {
+                    AddCurrentPageToBookmarks();
+                }
             }
         }
 
@@ -151,9 +162,49 @@ namespace FlixPiP
             double resizeStep = 20;
 
             // Altキーが押されているかどうか
-            bool isAlttPressed = Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift);
+            bool isAltPressed = Keyboard.IsKeyDown(Key.LeftAlt) || Keyboard.IsKeyDown(Key.RightAlt);
+            bool isShiftPressed = Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift);
 
-            if (isAlttPressed)
+            if (isShiftPressed) 
+            {
+                if (e.Key == Key.D1)
+                {
+                    LoadCurrentPageFromBookmarks(0);
+                }
+                else if (e.Key == Key.D2)
+                {
+                    LoadCurrentPageFromBookmarks(1);
+                }
+                else if (e.Key == Key.D3)
+                {
+                    LoadCurrentPageFromBookmarks(2);
+                }
+                else if (e.Key == Key.D4)
+                {
+                    LoadCurrentPageFromBookmarks(3);
+                }
+                else if (e.Key == Key.D5)
+                {
+                    LoadCurrentPageFromBookmarks(4);
+                }
+                else if (e.Key == Key.D6)
+                {
+                    LoadCurrentPageFromBookmarks(5);
+                }
+                else if (e.Key == Key.D7)
+                {
+                    LoadCurrentPageFromBookmarks(6);
+                }
+                else if (e.Key == Key.D8)
+                {
+                    LoadCurrentPageFromBookmarks(7);
+                }
+                else if (e.Key == Key.D9)
+                {
+                    LoadCurrentPageFromBookmarks(8);
+                }
+            }
+            else if (isAltPressed)
             {
                 // サイズ変更モード：Alt + 矢印
                 if (e.Key == Key.Left) this.Width = Math.Max(200, this.Width - resizeStep);
@@ -234,6 +285,83 @@ namespace FlixPiP
                 }
             };
             _opacityTimer.Start();
+        }
+
+        // 現在のURLをブックマークする
+        private void AddCurrentPageToBookmarks()
+        {
+            var url = webView?.Source?.ToString();
+            if (!string.IsNullOrEmpty(url)) BookmarkManager.AddBookmark(url);
+        }
+        // ブックマークをロードする
+        private void LoadCurrentPageFromBookmarks(int number)
+        {
+            var bookmarks = BookmarkManager.LoadBookmarks()?.ToList() ?? new List<string>();
+            if (number >= 0 && number < bookmarks.Count)
+            {
+                var url = bookmarks[number];
+                if (!string.IsNullOrEmpty(url) && webView?.CoreWebView2 != null)
+                {
+                    webView.CoreWebView2.Navigate(url);
+                    Debug.WriteLine($"Navigated to bookmark[{number}]: {url}");
+                    showurl(url);
+                }
+            }
+            else
+            {
+                MessageBox.Show($"その番号にブックマークは存在しません: {number + 1} (登録されている数={bookmarks.Count})");
+                Debug.WriteLine($"Bookmark index out of range: {number} (count={bookmarks.Count})");
+            }
+        }
+        private void showurl(string url)
+        {
+
+            // 既存のタイマーがあれば停止
+            if (_ShowURLTimer != null)
+            {
+                _ShowURLTimer.Stop();
+            }
+
+            // 既存のウィンドウがあれば閉じる
+            if (_ShowURLWindow != null)
+            {
+                _ShowURLWindow.Close();
+            }
+            _ShowURLWindow = new Window
+            {
+                Title = "ブックマーク",
+                Content = new TextBlock
+                {
+                    Text = $"{url}を開きました",
+                    Foreground = System.Windows.Media.Brushes.White,
+                    FontSize = 16,
+                    FontWeight = FontWeights.Bold,
+                    TextAlignment = System.Windows.TextAlignment.Center,
+                    Padding = new Thickness(30)
+                },
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(50, 0, 0, 0)),
+                WindowStyle = WindowStyle.None,
+                AllowsTransparency = true,
+                SizeToContent = SizeToContent.WidthAndHeight,
+                Topmost = true,
+                WindowStartupLocation = WindowStartupLocation.CenterScreen
+            };
+
+            _ShowURLWindow.Show();
+
+            // 2秒後に自動で閉じる
+            _ShowURLTimer = new System.Windows.Threading.DispatcherTimer();
+            _ShowURLTimer.Interval = TimeSpan.FromSeconds(2);
+            _ShowURLTimer.Tick += (s, e) =>
+            {
+                _ShowURLTimer.Stop();
+                if (_ShowURLWindow != null)
+                {
+                    _ShowURLWindow.Close();
+                    _ShowURLWindow = null;
+                }
+            };
+            _ShowURLTimer.Start();
         }
     }
 }
