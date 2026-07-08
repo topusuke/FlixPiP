@@ -24,8 +24,7 @@ netflixやPrime videoなどのDRMコンテンツも再生できます
 ## 特記事項
 プロジェクトの一部にはAI成果物が含まれます
 ## とぷすけについて
-https://www.topusuke.com/%E3%81%A8%E3%81%B7%E3%81%99%E3%81%91%E3%81%AB%E3%81%A4%E3%81%84%E3%81%A6/
-
+https://www.topusuke.com/about-me
 X:@topusuke
 ## 免責事項
 これらのソフトウェアを使用したことによる一切の責任を負いません。
