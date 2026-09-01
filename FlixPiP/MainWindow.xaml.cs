@@ -59,6 +59,8 @@ namespace FlixPiP
         {
             InitializeComponent();
 
+            LoadWindowSize();
+
             webView.EnsureCoreWebView2Async();
             webView.Source = new Uri("https://google.com");
 
@@ -83,10 +85,10 @@ namespace FlixPiP
             RegisterHotKey(_windowHandle, 9004, MOD_CONTROL, 0x25); // 0x25 = 矢印左 (Ctrl + ←)
 
             // Alt + 矢印のホットキー登録（透明度変更用）
-            RegisterHotKey(_windowHandle, 9005, MOD_SHIFT, VK_UP);    // Shift + ↑ (透明度UP)
-            RegisterHotKey(_windowHandle, 9006, MOD_SHIFT, VK_DOWN);  // Shift + ↓ (透明度DOWN)
-            RegisterHotKey(_windowHandle, 9007, MOD_SHIFT, VK_LEFT);  // Shift + ↓ (透明度DOWN)
-            RegisterHotKey(_windowHandle, 9008, MOD_SHIFT, VK_RIGHT);  // Shift + ↓ (透明度DOWN)
+            RegisterHotKey(_windowHandle, 9005, MOD_SHIFT, VK_UP);    // Shift
+            RegisterHotKey(_windowHandle, 9006, MOD_SHIFT, VK_DOWN);  // Shift
+            RegisterHotKey(_windowHandle, 9007, MOD_SHIFT, VK_LEFT);  // Shift
+            RegisterHotKey(_windowHandle, 9008, MOD_SHIFT, VK_RIGHT);  // Shift
 
             ComponentDispatcher.ThreadFilterMessage += ComponentDispatcher_ThreadFilterMessage;
         }
@@ -147,9 +149,9 @@ namespace FlixPiP
                     ShowTemporaryOpacityDisplay();
                     handled = true;
                 }
-                else if (id == 9007)
+                else if (id == 9007) // 設定画面を開く
                 {
-                    AddCurrentPageToBookmarks();
+                    OpenSettingWindow();
                 }
             }
         }
@@ -165,7 +167,7 @@ namespace FlixPiP
             bool isAltPressed = Keyboard.IsKeyDown(Key.LeftAlt) || Keyboard.IsKeyDown(Key.RightAlt);
             bool isShiftPressed = Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift);
 
-            if (isShiftPressed) 
+            if (isShiftPressed)
             {
                 if (e.Key == Key.D1)
                 {
@@ -203,6 +205,7 @@ namespace FlixPiP
                 {
                     LoadCurrentPageFromBookmarks(8);
                 }
+                e.Handled = true;
             }
             else if (isAltPressed)
             {
@@ -302,6 +305,12 @@ namespace FlixPiP
                 var url = bookmarks[number];
                 if (!string.IsNullOrEmpty(url) && webView?.CoreWebView2 != null)
                 {
+                    if (!Uri.TryCreate(url, UriKind.Absolute, out _))
+                    {
+                        MessageBox.Show($"無効なURLです: {url}");
+                        Debug.WriteLine($"Invalid URL in bookmarks: {url}");
+                        return;
+                    }
                     webView.CoreWebView2.Navigate(url);
                     Debug.WriteLine($"Navigated to bookmark[{number}]: {url}");
                     showurl(url);
@@ -362,6 +371,18 @@ namespace FlixPiP
                 }
             };
             _ShowURLTimer.Start();
+        }
+        private void OpenSettingWindow()
+        {
+            SettingWindow settingWindow = new SettingWindow();
+            settingWindow.Owner = this; // 親ウィンドウを設定
+            settingWindow.ShowDialog(); // モーダルで表示
+        }
+
+        private void LoadWindowSize()
+        {
+            Height = WindowsSize.LoadHeight();
+            Width = WindowsSize.LoadWidth();
         }
     }
 }

@@ -5,12 +5,19 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:FlixPiP"
         mc:Ignorable="d"
-        Title="SettingWindow" Height="258" Width="800">
+        Title="設定" Height="300" Width="800">
     <Grid>
         <StackPanel Margin="10">
-            <TextBlock Text="ショートカット設定 (16個)" FontWeight="Bold"/>
+            <TextBlock Text="ウィンドウ設定" FontSize="15" FontWeight="Bold"/>
+            <StackPanel Orientation="Horizontal" Height="30">
+                <TextBlock Text="高さ" FontSize="15" VerticalAlignment="Center" />
+                <TextBox x:Name="WindowHeightTextBox" Height="20" Width="100" Margin="5,0,5,0"/>
+                <TextBlock Text="横幅" FontSize="15" VerticalAlignment="Center" />
+                <TextBox x:Name="WindowWidthTextBox" Height="20" Width="100"/>
 
-            <TextBlock Text="ブックマーク (改行で区切り)" FontWeight="Bold" Margin="0,10,0,0"/>
+            </StackPanel>
+
+            <TextBlock Text="ブックマーク (改行で区切り)" FontSize="15" FontWeight="Bold" Margin="0,10,0,0"/>
             <TextBox x:Name="BookmarkTextBox" Height="145" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/>
 
             <Button Content="保存して閉じる" Click="SaveButton_Click" Margin="0,10,0,0"/>
