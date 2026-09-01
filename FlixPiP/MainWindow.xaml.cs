@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
+using Microsoft.Web.WebView2.Core;
 
 namespace FlixPiP
 {
@@ -31,6 +32,17 @@ namespace FlixPiP
         [DllImport("user32.dll")]
         private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y,
             int cx, int cy, uint uFlags);
+        [DllImport("user32.dll")]
+        private static extern bool GetCursorPos(out POINT lpPoint);
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT
+        {
+            public int X;
+            public int Y;
+        }
 
         [StructLayout(LayoutKind.Sequential)]
         private struct RECT
@@ -72,6 +84,53 @@ namespace FlixPiP
         private const uint SWP_NOMOVE = 0x0002;
         private const uint SWP_NOZORDER = 0x0004;
         private const uint SWP_NOACTIVATE = 0x0010;
+        private const int VK_RBUTTON = 0x02;
+
+        private const string RightDragScript = """
+            (() => {
+                if (window.__flixPiPRightDragInstalled) return;
+                window.__flixPiPRightDragInstalled = true;
+
+                let dragging = false;
+                let pointerId = null;
+
+                document.addEventListener('contextmenu', event => {
+                    event.preventDefault();
+                }, true);
+
+                document.addEventListener('pointerdown', event => {
+                    if (event.button !== 2) return;
+                    dragging = true;
+                    pointerId = event.pointerId;
+                    event.target.setPointerCapture?.(event.pointerId);
+                    window.chrome.webview.postMessage('flixpip:right-drag:start');
+                    event.preventDefault();
+                }, true);
+
+                document.addEventListener('pointermove', event => {
+                    if (!dragging || event.pointerId !== pointerId) return;
+                    window.chrome.webview.postMessage('flixpip:right-drag:move');
+                    event.preventDefault();
+                }, true);
+
+                const endDrag = event => {
+                    if (!dragging || (event.pointerId !== undefined && event.pointerId !== pointerId)) return;
+                    dragging = false;
+                    pointerId = null;
+                    window.chrome.webview.postMessage('flixpip:right-drag:end');
+                    event.preventDefault();
+                };
+
+                document.addEventListener('pointerup', endDrag, true);
+                document.addEventListener('pointercancel', endDrag, true);
+                window.addEventListener('blur', () => {
+                    if (!dragging) return;
+                    dragging = false;
+                    pointerId = null;
+                    window.chrome.webview.postMessage('flixpip:right-drag:end');
+                });
+            })();
+            """;
 
         // ホットキー用の定数
         private const uint MOD_NONE = 0x0000;
@@ -91,6 +150,9 @@ namespace FlixPiP
 
         private IntPtr _windowHandle;
         private HwndSource? _windowSource;
+        private bool _isRightDragging;
+        private POINT _dragStartCursor;
+        private RECT _dragStartWindow;
         private int _initialStyle;
 
         private Window _currentOpacityWindow;
@@ -102,17 +164,95 @@ namespace FlixPiP
         private Window _ShowURLWindow;
         private System.Windows.Threading.DispatcherTimer _ShowURLTimer;
 
+        private Window _EmptyWindow;
+
         public MainWindow()
         {
             InitializeComponent();
 
             LoadWindowSize();
 
+            webView.CoreWebView2InitializationCompleted += WebView_CoreWebView2InitializationCompleted;
             webView.EnsureCoreWebView2Async();
             webView.Source = new Uri("https://google.com");
 
             this.PreviewKeyDown += MainWindow_PreviewKeyDown;
             webView.NavigationCompleted += WebView_NavigationCompleted;
+        }
+
+        private async void WebView_CoreWebView2InitializationCompleted(
+            object? sender,
+            CoreWebView2InitializationCompletedEventArgs e)
+        {
+            if (!e.IsSuccess || webView.CoreWebView2 == null)
+                return;
+
+            webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+            webView.CoreWebView2.WebMessageReceived += WebView_WebMessageReceived;
+            await webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(RightDragScript);
+
+            // 初期ページがスクリプト登録前に読み込まれた場合にも適用する。
+            await webView.CoreWebView2.ExecuteScriptAsync(RightDragScript);
+        }
+
+        private void WebView_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+        {
+            string message;
+            try
+            {
+                message = e.TryGetWebMessageAsString();
+            }
+            catch (ArgumentException)
+            {
+                return;
+            }
+
+            switch (message)
+            {
+                case "flixpip:right-drag:start":
+                    StartRightDrag();
+                    break;
+                case "flixpip:right-drag:move":
+                    ContinueRightDrag();
+                    break;
+                case "flixpip:right-drag:end":
+                    _isRightDragging = false;
+                    break;
+            }
+        }
+
+        private void StartRightDrag()
+        {
+            if ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) == 0
+                || !GetCursorPos(out _dragStartCursor)
+                || !GetWindowRect(_windowHandle, out _dragStartWindow))
+            {
+                _isRightDragging = false;
+                return;
+            }
+
+            _isRightDragging = true;
+        }
+
+        private void ContinueRightDrag()
+        {
+            if (!_isRightDragging)
+                return;
+
+            if ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) == 0 || !GetCursorPos(out POINT cursor))
+            {
+                _isRightDragging = false;
+                return;
+            }
+
+            SetWindowPos(
+                _windowHandle,
+                IntPtr.Zero,
+                _dragStartWindow.Left + cursor.X - _dragStartCursor.X,
+                _dragStartWindow.Top + cursor.Y - _dragStartCursor.Y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -152,6 +292,11 @@ namespace FlixPiP
 
         protected override void OnClosed(EventArgs e)
         {
+            if (webView.CoreWebView2 != null)
+            {
+                webView.CoreWebView2.WebMessageReceived -= WebView_WebMessageReceived;
+            }
+
             if (_windowSource != null)
             {
                 _windowSource.RemoveHook(WindowMessageHook);
@@ -346,29 +491,6 @@ namespace FlixPiP
                 }
                 e.Handled = true;
             }
-            else if (isAltPressed)
-            {
-                // サイズ変更モード：Alt + 矢印
-                if (e.Key == Key.Left) this.Width = Math.Max(200, this.Width - resizeStep);
-                if (e.Key == Key.Right) this.Width = Math.Min(1920, this.Width + resizeStep);
-                if (e.Key == Key.Up) this.Height = Math.Max(150, this.Height - resizeStep);
-                if (e.Key == Key.Down) this.Height = Math.Min(1080, this.Height + resizeStep);
-                e.Handled = true;
-            }
-            else
-            {
-                // 位置移動モード：矢印のみ
-                if (e.Key == Key.Left) this.Left -= moveStep;
-                if (e.Key == Key.Right) this.Left += moveStep;
-                if (e.Key == Key.Up) this.Top -= moveStep;
-                if (e.Key == Key.Down) this.Top += moveStep;
-
-                // 矢印入力をブラウザ側に奪われないようにブロックする
-                if (e.Key == Key.Left || e.Key == Key.Right || e.Key == Key.Up || e.Key == Key.Down)
-                {
-                    e.Handled = true;
-                }
-            }
         }
 
 
@@ -428,7 +550,6 @@ namespace FlixPiP
             };
             _opacityTimer.Start();
         }
-
         // 現在のURLをブックマークする
         private void AddCurrentPageToBookmarks()
         {
@@ -511,6 +632,7 @@ namespace FlixPiP
             };
             _ShowURLTimer.Start();
         }
+
         private void OpenSettingWindow()
         {
             SettingWindow settingWindow = new SettingWindow();
