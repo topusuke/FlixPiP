@@ -1,4 +1,5 @@
 ﻿using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -21,11 +22,56 @@ namespace FlixPiP
         private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
         [DllImport("user32.dll")]
         private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+        [DllImport("user32.dll")]
+        private static extern IntPtr MonitorFromRect(ref RECT lprc, uint dwFlags);
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y,
+            int cx, int cy, uint uFlags);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+        private struct MONITORINFO
+        {
+            public int Size;
+            public RECT Monitor;
+            public RECT WorkArea;
+            public uint Flags;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WINDOWPOS
+        {
+            public IntPtr Hwnd;
+            public IntPtr HwndInsertAfter;
+            public int X;
+            public int Y;
+            public int Width;
+            public int Height;
+            public uint Flags;
+        }
 
         private const int GWL_EXSTYLE = -20;
         private const int WS_EX_LAYERED = 0x80000;
         private const int WS_EX_TRANSPARENT = 0x20;
         private const uint LWA_ALPHA = 0x2;
+        private const int WM_WINDOWPOSCHANGING = 0x0046;
+        private const uint MONITOR_DEFAULTTONEAREST = 0x00000002;
+        private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOZORDER = 0x0004;
+        private const uint SWP_NOACTIVATE = 0x0010;
 
         // ホットキー用の定数
         private const uint MOD_NONE = 0x0000;
@@ -44,6 +90,7 @@ namespace FlixPiP
         private const int HK_NAV_GOOGLE = 9004;// Ctrl + ← (Googleを開く)
 
         private IntPtr _windowHandle;
+        private HwndSource? _windowSource;
         private int _initialStyle;
 
         private Window _currentOpacityWindow;
@@ -72,7 +119,11 @@ namespace FlixPiP
         {
             base.OnSourceInitialized(e);
             _windowHandle = new WindowInteropHelper(this).Handle;
+            _windowSource = HwndSource.FromHwnd(_windowHandle);
+            _windowSource?.AddHook(WindowMessageHook);
             _initialStyle = GetWindowLong(_windowHandle, GWL_EXSTYLE);
+
+            RestoreWindowPosition();
 
             // 操作可能状態
             SetWindowLong(_windowHandle, GWL_EXSTYLE, _initialStyle | WS_EX_LAYERED);
@@ -91,6 +142,94 @@ namespace FlixPiP
             RegisterHotKey(_windowHandle, 9008, MOD_SHIFT, VK_RIGHT);  // Shift
 
             ComponentDispatcher.ThreadFilterMessage += ComponentDispatcher_ThreadFilterMessage;
+        }
+
+        protected override void OnClosing(CancelEventArgs e)
+        {
+            SaveWindowPosition();
+            base.OnClosing(e);
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            if (_windowSource != null)
+            {
+                _windowSource.RemoveHook(WindowMessageHook);
+            }
+
+            base.OnClosed(e);
+        }
+
+        private IntPtr WindowMessageHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (message != WM_WINDOWPOSCHANGING || lParam == IntPtr.Zero)
+                return IntPtr.Zero;
+
+            var position = Marshal.PtrToStructure<WINDOWPOS>(lParam);
+            if (!GetWindowRect(hwnd, out RECT currentBounds))
+                return IntPtr.Zero;
+
+            int width = (position.Flags & SWP_NOSIZE) != 0
+                ? currentBounds.Right - currentBounds.Left
+                : position.Width;
+            int height = (position.Flags & SWP_NOSIZE) != 0
+                ? currentBounds.Bottom - currentBounds.Top
+                : position.Height;
+            int x = (position.Flags & SWP_NOMOVE) != 0 ? currentBounds.Left : position.X;
+            int y = (position.Flags & SWP_NOMOVE) != 0 ? currentBounds.Top : position.Y;
+
+            var proposedBounds = new RECT
+            {
+                Left = x,
+                Top = y,
+                Right = x + width,
+                Bottom = y + height
+            };
+            IntPtr monitor = MonitorFromRect(ref proposedBounds, MONITOR_DEFAULTTONEAREST);
+            var monitorInfo = new MONITORINFO { Size = Marshal.SizeOf<MONITORINFO>() };
+            if (monitor == IntPtr.Zero || !GetMonitorInfo(monitor, ref monitorInfo))
+                return IntPtr.Zero;
+
+            int workWidth = monitorInfo.WorkArea.Right - monitorInfo.WorkArea.Left;
+            int workHeight = monitorInfo.WorkArea.Bottom - monitorInfo.WorkArea.Top;
+            width = Math.Min(width, workWidth);
+            height = Math.Min(height, workHeight);
+            x = Math.Clamp(x, monitorInfo.WorkArea.Left, monitorInfo.WorkArea.Right - width);
+            y = Math.Clamp(y, monitorInfo.WorkArea.Top, monitorInfo.WorkArea.Bottom - height);
+
+            position.X = x;
+            position.Y = y;
+            position.Width = width;
+            position.Height = height;
+            position.Flags &= ~(SWP_NOMOVE | SWP_NOSIZE);
+            Marshal.StructureToPtr(position, lParam, false);
+            return IntPtr.Zero;
+        }
+
+        private void RestoreWindowPosition()
+        {
+            if (!Properties.Settings.Default.HasWindowPosition || !GetWindowRect(_windowHandle, out RECT bounds))
+                return;
+
+            SetWindowPos(
+                _windowHandle,
+                IntPtr.Zero,
+                Properties.Settings.Default.WindowLeft,
+                Properties.Settings.Default.WindowTop,
+                bounds.Right - bounds.Left,
+                bounds.Bottom - bounds.Top,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+
+        private void SaveWindowPosition()
+        {
+            if (_windowHandle == IntPtr.Zero || !GetWindowRect(_windowHandle, out RECT bounds))
+                return;
+
+            Properties.Settings.Default.WindowLeft = bounds.Left;
+            Properties.Settings.Default.WindowTop = bounds.Top;
+            Properties.Settings.Default.HasWindowPosition = true;
+            Properties.Settings.Default.Save();
         }
 
         // ホットキーを処理
