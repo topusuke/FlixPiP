@@ -28,6 +28,7 @@ namespace FlixPiP
 
             WindowHeightTextBox.Text = WindowsSize.LoadHeight().ToString(CultureInfo.CurrentCulture);
             WindowWidthTextBox.Text = WindowsSize.LoadWidth().ToString(CultureInfo.CurrentCulture);
+            AllowHttpCheckBox.IsChecked = Properties.Settings.Default.AllowHttp;
 
             // ショートカットのロード
             var keys = ShortcutManager.LoadShortcutKeys();
@@ -48,15 +49,19 @@ namespace FlixPiP
 
             if (!double.TryParse(WindowHeightTextBox.Text, NumberStyles.Number, CultureInfo.CurrentCulture, out double height)
                 || !double.TryParse(WindowWidthTextBox.Text, NumberStyles.Number, CultureInfo.CurrentCulture, out double width)
-                || !double.IsFinite(height) || !double.IsFinite(width)
-                || height <= 0 || width <= 0)
+                || !WindowsSize.IsValidHeight(height)
+                || !WindowsSize.IsValidWidth(width))
             {
-                MessageBox.Show(this, "高さと横幅には、0より大きい数値を入力してください。", "入力エラー",
+                MessageBox.Show(this,
+                    $"高さには{WindowsSize.MinimumHeight}以上、横幅には{WindowsSize.MinimumWidth}以上の数値を入力してください。",
+                    "入力エラー",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
             WindowsSize.Save(height, width);
+            Properties.Settings.Default.AllowHttp = AllowHttpCheckBox.IsChecked == true;
+            Properties.Settings.Default.Save();
             if (Owner is MainWindow mainWindow)
             {
                 mainWindow.Height = height;

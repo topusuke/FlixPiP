@@ -8,7 +8,6 @@ namespace FlixPiP
 
         public static IEnumerable<string> LoadShortcutKeys()
         {
-            // 設定が未定義の場合にも安全に空の一覧を返す
             if (Properties.Settings.Default.Properties[SettingName] == null)
                 return Enumerable.Empty<string>();
 

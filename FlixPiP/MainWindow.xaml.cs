@@ -85,6 +85,7 @@ namespace FlixPiP
         private const uint SWP_NOZORDER = 0x0004;
         private const uint SWP_NOACTIVATE = 0x0010;
         private const int VK_RBUTTON = 0x02;
+        private const int WebViewInitializationAttempts = 3;
 
         private const string RightDragScript = """
             (() => {
@@ -154,17 +155,18 @@ namespace FlixPiP
         private POINT _dragStartCursor;
         private RECT _dragStartWindow;
         private int _initialStyle;
+        private bool _isWebViewConfigured;
+        private bool _isClosing;
 
-        private Window _currentOpacityWindow;
-        private System.Windows.Threading.DispatcherTimer _opacityTimer;
+        private Window? _currentOpacityWindow;
+        private System.Windows.Threading.DispatcherTimer? _opacityTimer;
         private byte _currentOpacity = 127; // 透明度の設定 （初期値50%）
 
         public int Bookmarknumber = 0; // 現在のブックマーク番号
 
-        private Window _ShowURLWindow;
-        private System.Windows.Threading.DispatcherTimer _ShowURLTimer;
-
-        private Window _EmptyWindow;
+        private Window? _ShowURLWindow;
+        private System.Windows.Threading.DispatcherTimer? _ShowURLTimer;
+        private SettingWindow? _settingWindow;
 
         public MainWindow()
         {
@@ -172,27 +174,108 @@ namespace FlixPiP
 
             LoadWindowSize();
 
-            webView.CoreWebView2InitializationCompleted += WebView_CoreWebView2InitializationCompleted;
-            webView.EnsureCoreWebView2Async();
-            webView.Source = new Uri("https://google.com");
+            Loaded += MainWindow_Loaded;
 
             this.PreviewKeyDown += MainWindow_PreviewKeyDown;
-            webView.NavigationCompleted += WebView_NavigationCompleted;
         }
 
-        private async void WebView_CoreWebView2InitializationCompleted(
-            object? sender,
-            CoreWebView2InitializationCompletedEventArgs e)
+        private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            if (!e.IsSuccess || webView.CoreWebView2 == null)
+            Loaded -= MainWindow_Loaded;
+
+            while (!_isClosing)
+            {
+                if (await TryInitializeWebViewAsync())
+                    return;
+
+                MessageBoxResult result = MessageBox.Show(
+                    this,
+                    "WebView2を初期化できませんでした。\n\nMicrosoft Edge WebView2 Runtimeのインストール状態や、空き容量、アクセス権限を確認してください。\n\n再試行しますか？",
+                    "ブラウザー初期化エラー",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Error,
+                    MessageBoxResult.Yes);
+
+                if (result != MessageBoxResult.Yes)
+                {
+                    Close();
+                    return;
+                }
+            }
+        }
+
+        private async Task<bool> TryInitializeWebViewAsync()
+        {
+            for (int attempt = 1; attempt <= WebViewInitializationAttempts && !_isClosing; attempt++)
+            {
+                try
+                {
+                    await webView.EnsureCoreWebView2Async();
+                    if (webView.CoreWebView2 == null)
+                        throw new InvalidOperationException("WebView2 initialization completed without a CoreWebView2 instance.");
+
+                    await ConfigureWebViewAsync(webView.CoreWebView2);
+                    webView.Source = new Uri("https://google.com");
+                    return true;
+                }
+                catch (Exception exception) when (exception is not OutOfMemoryException)
+                {
+                    Debug.WriteLine($"WebView2 initialization attempt {attempt} failed: {exception}");
+                    if (attempt < WebViewInitializationAttempts && !_isClosing)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(attempt));
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private async Task ConfigureWebViewAsync(CoreWebView2 coreWebView)
+        {
+            if (_isWebViewConfigured)
                 return;
 
-            webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-            webView.CoreWebView2.WebMessageReceived += WebView_WebMessageReceived;
-            await webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(RightDragScript);
+            coreWebView.Settings.AreDefaultContextMenusEnabled = false;
+            await coreWebView.AddScriptToExecuteOnDocumentCreatedAsync(RightDragScript);
+            coreWebView.WebMessageReceived += WebView_WebMessageReceived;
+            coreWebView.NavigationStarting += WebView_NavigationStarting;
+            coreWebView.NewWindowRequested += WebView_NewWindowRequested;
+            _isWebViewConfigured = true;
+        }
 
-            // 初期ページがスクリプト登録前に読み込まれた場合にも適用する。
-            await webView.CoreWebView2.ExecuteScriptAsync(RightDragScript);
+        private void WebView_NavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
+        {
+            if (IsAllowedWebUrl(e.Uri))
+                return;
+
+            e.Cancel = true;
+            Debug.WriteLine($"Blocked navigation to disallowed URI: {e.Uri}");
+        }
+
+        private static bool IsAllowedWebUrl(string? url)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri))
+                return false;
+
+            if (uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return Properties.Settings.Default.AllowHttp
+                && uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void WebView_NewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
+        {
+            e.Handled = true;
+            if (!IsAllowedWebUrl(e.Uri) || webView.CoreWebView2 == null)
+            {
+                Debug.WriteLine($"Blocked new window request to disallowed URI: {e.Uri}");
+                return;
+            }
+
+            // ポップアップを作らず、許可したURLを現在のWebViewで開く。
+            webView.CoreWebView2.Navigate(e.Uri);
         }
 
         private void WebView_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -286,15 +369,36 @@ namespace FlixPiP
 
         protected override void OnClosing(CancelEventArgs e)
         {
+            _isClosing = true;
             SaveWindowPosition();
             base.OnClosing(e);
         }
 
         protected override void OnClosed(EventArgs e)
         {
+            Loaded -= MainWindow_Loaded;
+            PreviewKeyDown -= MainWindow_PreviewKeyDown;
+            ComponentDispatcher.ThreadFilterMessage -= ComponentDispatcher_ThreadFilterMessage;
+
+            for (int hotKeyId = 9001; hotKeyId <= 9008; hotKeyId++)
+            {
+                UnregisterHotKey(_windowHandle, hotKeyId);
+            }
+
+            _opacityTimer?.Stop();
+            _ShowURLTimer?.Stop();
+            _currentOpacityWindow?.Close();
+            _ShowURLWindow?.Close();
+            _opacityTimer = null;
+            _ShowURLTimer = null;
+            _currentOpacityWindow = null;
+            _ShowURLWindow = null;
+
             if (webView.CoreWebView2 != null)
             {
                 webView.CoreWebView2.WebMessageReceived -= WebView_WebMessageReceived;
+                webView.CoreWebView2.NavigationStarting -= WebView_NavigationStarting;
+                webView.CoreWebView2.NewWindowRequested -= WebView_NewWindowRequested;
             }
 
             if (_windowSource != null)
@@ -412,7 +516,7 @@ namespace FlixPiP
                 else if (id == HK_NAV_GOOGLE)
                 {
                     // WebView2のページをGoogleに切り替える
-                    webView.CoreWebView2.Navigate("https://www.google.com");
+                    webView.CoreWebView2?.Navigate("https://www.google.com");
                     handled = true;
                 }
                 else if (id == 9005)
@@ -440,71 +544,42 @@ namespace FlixPiP
             }
         }
 
-        // 矢印キーによる移動とサイズ変更の処理
+        // 数字キーによるブックマーク呼び出し
         private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
         {
-
-            double moveStep = 15; // 1回に動くピクセル数
-            double resizeStep = 20;
-
-            // Altキーが押されているかどうか
-            bool isAltPressed = Keyboard.IsKeyDown(Key.LeftAlt) || Keyboard.IsKeyDown(Key.RightAlt);
             bool isShiftPressed = Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift);
 
-            if (isShiftPressed)
+            if (!isShiftPressed)
+                return;
+
+            int bookmarkIndex = e.Key switch
             {
-                if (e.Key == Key.D1)
-                {
-                    LoadCurrentPageFromBookmarks(0);
-                }
-                else if (e.Key == Key.D2)
-                {
-                    LoadCurrentPageFromBookmarks(1);
-                }
-                else if (e.Key == Key.D3)
-                {
-                    LoadCurrentPageFromBookmarks(2);
-                }
-                else if (e.Key == Key.D4)
-                {
-                    LoadCurrentPageFromBookmarks(3);
-                }
-                else if (e.Key == Key.D5)
-                {
-                    LoadCurrentPageFromBookmarks(4);
-                }
-                else if (e.Key == Key.D6)
-                {
-                    LoadCurrentPageFromBookmarks(5);
-                }
-                else if (e.Key == Key.D7)
-                {
-                    LoadCurrentPageFromBookmarks(6);
-                }
-                else if (e.Key == Key.D8)
-                {
-                    LoadCurrentPageFromBookmarks(7);
-                }
-                else if (e.Key == Key.D9)
-                {
-                    LoadCurrentPageFromBookmarks(8);
-                }
-                e.Handled = true;
-            }
+                Key.D1 => 0,
+                Key.D2 => 1,
+                Key.D3 => 2,
+                Key.D4 => 3,
+                Key.D5 => 4,
+                Key.D6 => 5,
+                Key.D7 => 6,
+                Key.D8 => 7,
+                Key.D9 => 8,
+                _ => -1
+            };
+
+            if (bookmarkIndex < 0)
+                return;
+
+            LoadCurrentPageFromBookmarks(bookmarkIndex);
+            e.Handled = true;
         }
 
-
-        private async void WebView_NavigationCompleted(object sender, Microsoft.Web.WebView2.Core.CoreWebView2NavigationCompletedEventArgs e)
-        {
-            await webView.EnsureCoreWebView2Async();
-        }
 
         private void ShowTemporaryOpacityDisplay()
         {
             // 既存のタイマーがあれば停止
             if (_opacityTimer != null)
             {
-                _opacityTimer.Stop();
+                _opacityTimer?.Stop();
             }
 
             // 既存のウィンドウがあれば閉じる
@@ -541,7 +616,7 @@ namespace FlixPiP
             _opacityTimer.Interval = TimeSpan.FromSeconds(2);
             _opacityTimer.Tick += (s, e) =>
             {
-                _opacityTimer.Stop();
+                _opacityTimer?.Stop();
                 if (_currentOpacityWindow != null)
                 {
                     _currentOpacityWindow.Close();
@@ -565,10 +640,10 @@ namespace FlixPiP
                 var url = bookmarks[number];
                 if (!string.IsNullOrEmpty(url) && webView?.CoreWebView2 != null)
                 {
-                    if (!Uri.TryCreate(url, UriKind.Absolute, out _))
+                    if (!IsAllowedWebUrl(url))
                     {
-                        MessageBox.Show($"無効なURLです: {url}");
-                        Debug.WriteLine($"Invalid URL in bookmarks: {url}");
+                        MessageBox.Show($"設定で許可されていないURLは開けません: {url}");
+                        Debug.WriteLine($"Disallowed URL in bookmarks: {url}");
                         return;
                     }
                     webView.CoreWebView2.Navigate(url);
@@ -588,7 +663,7 @@ namespace FlixPiP
             // 既存のタイマーがあれば停止
             if (_ShowURLTimer != null)
             {
-                _ShowURLTimer.Stop();
+                _ShowURLTimer?.Stop();
             }
 
             // 既存のウィンドウがあれば閉じる
@@ -623,7 +698,7 @@ namespace FlixPiP
             _ShowURLTimer.Interval = TimeSpan.FromSeconds(2);
             _ShowURLTimer.Tick += (s, e) =>
             {
-                _ShowURLTimer.Stop();
+                _ShowURLTimer?.Stop();
                 if (_ShowURLWindow != null)
                 {
                     _ShowURLWindow.Close();
@@ -635,9 +710,30 @@ namespace FlixPiP
 
         private void OpenSettingWindow()
         {
-            SettingWindow settingWindow = new SettingWindow();
-            settingWindow.Owner = this; // 親ウィンドウを設定
-            settingWindow.ShowDialog(); // モーダルで表示
+            if (_settingWindow != null)
+            {
+                if (_settingWindow.WindowState == WindowState.Minimized)
+                {
+                    _settingWindow.WindowState = WindowState.Normal;
+                }
+
+                _settingWindow.Activate();
+                return;
+            }
+
+            _settingWindow = new SettingWindow
+            {
+                Owner = this
+            };
+
+            try
+            {
+                _settingWindow.ShowDialog();
+            }
+            finally
+            {
+                _settingWindow = null;
+            }
         }
 
         private void LoadWindowSize()
