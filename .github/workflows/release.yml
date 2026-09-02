@@ -1,0 +1,87 @@
+name: Build and release FlixPiP
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build Windows x64 release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore FlixPiP.slnx
+
+      - name: Build
+        run: >
+          dotnet build FlixPiP.slnx
+          --configuration Release
+          --no-restore
+
+      - name: Publish self-contained application
+        run: >
+          dotnet publish FlixPiP/FlixPiP.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --no-restore
+          --output artifacts/FlixPiP
+          -p:PublishSingleFile=false
+          -p:DebugType=None
+          -p:DebugSymbols=false
+
+      - name: Include license and documentation
+        shell: pwsh
+        run: |
+          Copy-Item LICENSE.txt artifacts/FlixPiP/LICENSE.txt
+          Copy-Item README.md artifacts/FlixPiP/README.md
+
+      - name: Create release ZIP
+        shell: pwsh
+        run: |
+          $zipName = "FlixPiP-$env:GITHUB_REF_NAME-win-x64.zip"
+          Compress-Archive `
+            -Path "artifacts/FlixPiP/*" `
+            -DestinationPath "artifacts/$zipName"
+
+          "RELEASE_ZIP=artifacts/$zipName" >> $env:GITHUB_ENV
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: FlixPiP-${{ github.ref_name }}-win-x64
+          path: ${{ env.RELEASE_ZIP }}
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $arguments = @(
+            "release", "create",
+            "$env:GITHUB_REF_NAME",
+            "$env:RELEASE_ZIP",
+            "--verify-tag",
+            "--generate-notes",
+            "--title", "FlixPiP $env:GITHUB_REF_NAME"
+          )
+
+          if ($env:GITHUB_REF_NAME -match "-(alpha|beta|rc)") {
+            $arguments += "--prerelease"
+          }
+
+          gh @arguments
