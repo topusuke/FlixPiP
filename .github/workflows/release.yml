@@ -48,6 +48,8 @@ jobs:
         run: |
           Copy-Item LICENSE.txt artifacts/FlixPiP/LICENSE.txt
           Copy-Item README.md artifacts/FlixPiP/README.md
+          Copy-Item WEBVIEW2-LICENSE.txt artifacts/FlixPiP/WEBVIEW2-LICENSE.txt
+          Copy-Item WEBVIEW2-NOTICE.txt artifacts/FlixPiP/WEBVIEW2-NOTICE.txt
 
       - name: Create release ZIP
         shell: pwsh
