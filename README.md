@@ -65,17 +65,6 @@ I assume no responsibility for any damages or issues resulting from the use of t
 ## License
 This program and its files are licensed under the Apache License 2.0.
 
-## Code signing policy
-
-Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
-
-Official FlixPiP release binaries are built from this repository using GitHub Actions.
-
-- Committers and reviewers: [topusuke](https://github.com/topusuke)
-- Approvers: [topusuke](https://github.com/topusuke)
-- Each signing request requires manual approval.
-- Only release artifacts built from the official FlixPiP repository are eligible for signing.
-
 ## Privacy policy
 
 FlixPiP does not collect telemetry or send usage information to a server operated by the FlixPiP developer.
